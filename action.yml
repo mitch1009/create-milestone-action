@@ -1,0 +1,150 @@
+name: 'Milestone and Issue Creator'
+description: 'Create milestones, issues, and sub-issues from a markdown file'
+inputs:
+  github-token:
+    description: 'GitHub token'
+    required: true
+  milestone-file:
+    description: 'Path to the milestone markdown file'
+    required: true
+    default: 'milestones.md'
+outputs:
+  milestones-created:
+    description: 'Number of new milestones created'
+  milestones-updated:
+    description: 'Number of existing milestones updated'
+  issues-created:
+    description: 'Number of new issues created'
+  sub-issues-created:
+    description: 'Number of new sub-issues created'
+  issues-skipped:
+    description: 'Number of existing issues skipped'
+  summary:
+    description: 'Summary of actions taken'
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install PyGithub
+      shell: bash
+
+    - name: Create and run Python script
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        MILESTONE_FILE: ${{ inputs.milestone-file }}
+      run: |
+        cat << EOF > create_milestones_and_issues.py
+        import os
+        import json
+        import re
+        from github import Github
+
+        def parse_milestone_data(file_path):
+            milestones = []
+            current_milestone = None
+            current_issues = []
+            current_issue = None
+            current_sub_issues = []
+
+            with open(file_path, 'r') as file:
+                for line in file:
+                    line = line.strip()
+                    if line.startswith('## Milestone'):
+                        if current_milestone:
+                            if current_issue:
+                                current_issues.append((current_issue, current_sub_issues))
+                                current_issue = None
+                                current_sub_issues = []
+                            milestones.append((current_milestone, current_issues))
+                        current_milestone = line.split(':')[1].strip()
+                        current_issues = []
+                    elif re.match(r'^\d+\.', line):  # Matches numbered items
+                        if current_issue:
+                            current_issues.append((current_issue, current_sub_issues))
+                            current_sub_issues = []
+                        current_issue = line.split('.', 1)[1].strip()
+                    elif line.startswith('- [ ]'):
+                        current_sub_issues.append(line[5:].strip())
+
+            if current_milestone:
+                if current_issue:
+                    current_issues.append((current_issue, current_sub_issues))
+                milestones.append((current_milestone, current_issues))
+
+            return milestones
+
+        def create_milestones_and_issues(repo, milestones):
+            stats = {
+                "milestones_created": 0,
+                "milestones_updated": 0,
+                "issues_created": 0,
+                "sub_issues_created": 0,
+                "issues_skipped": 0
+            }
+            summary = []
+
+            for milestone_title, issues in milestones:
+                # Create or get existing milestone
+                existing_milestones = list(repo.get_milestones(state='open'))
+                milestone = next((m for m in existing_milestones if m.title == milestone_title), None)
+                if not milestone:
+                    milestone = repo.create_milestone(title=milestone_title)
+                    stats["milestones_created"] += 1
+                    summary.append(f"Created milestone: {milestone_title}")
+                else:
+                    stats["milestones_updated"] += 1
+                    summary.append(f"Updated milestone: {milestone_title}")
+
+                # Create issues and sub-issues under the milestone
+                for issue_title, sub_issues in issues:
+                    existing_issues = list(repo.get_issues(milestone=milestone, state='open'))
+                    parent_issue = next((i for i in existing_issues if i.title == issue_title), None)
+                    
+                    if not parent_issue:
+                        parent_issue = repo.create_issue(title=issue_title, milestone=milestone)
+                        stats["issues_created"] += 1
+                        summary.append(f"Created issue: {issue_title}")
+                    else:
+                        stats["issues_skipped"] += 1
+                        summary.append(f"Skipped existing issue: {issue_title}")
+
+                    # Create sub-issues
+                    for sub_issue_title in sub_issues:
+                        sub_issue = repo.create_issue(
+                            title=sub_issue_title,
+                            body=f"Parent issue: #{parent_issue.number}",
+                            milestone=milestone
+                        )
+                        stats["sub_issues_created"] += 1
+                        summary.append(f"Created sub-issue: {sub_issue_title}")
+
+            return stats, summary
+
+        # Main execution
+        github_token = os.environ['GITHUB_TOKEN']
+        milestone_file = os.environ['MILESTONE_FILE']
+        repo = Github(github_token).get_repo(os.environ['GITHUB_REPOSITORY'])
+
+        parsed_milestones = parse_milestone_data(milestone_file)
+        stats, summary = create_milestones_and_issues(repo, parsed_milestones)
+
+        # Output results
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+            for key, value in stats.items():
+                print(f"{key}={value}", file=f)
+            print(f"summary={json.dumps(summary)}", file=f)
+
+        EOF
+
+        python create_milestones_and_issues.py
+      shell: bash
