@@ -7,7 +7,7 @@
     "rel": "standard-version --sign --release-as patch --tag-prefix 'docker-trigger@'",
     "rel:v": "standard-version --release-as patch",
     "rel:local": "standard-version --release-as patch --tag-prefix 'docker-trigger@'",
-    "release": "standard-version --sign --release-as patch --tag-prefix 'docker-trigger@' "
+    "release": "standard-version --sign --release-as patch  "
   },
   "keywords": [
     "github",
