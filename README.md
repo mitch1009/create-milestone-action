@@ -11,6 +11,7 @@ with:
   milestone-file: ${{ github.workspace }}/milestones.md
 ```
 
+
 ## Inputs
 
 ### `github-token`
